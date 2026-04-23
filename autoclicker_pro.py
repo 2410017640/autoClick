@@ -2816,6 +2816,7 @@ class AutoClickerApp:
     def _start_rec(self):
         self.btn_rec_start.config(state='disabled')
         self.btn_rec_stop.config(state='normal')
+        cur_w, cur_h = pyautogui.size().width, pyautogui.size().height
         self.sv_rec_status.set(f"🔴 录制中… ({cur_w}×{cur_h})")
         for item in self.tree_events.get_children():
             self.tree_events.delete(item)

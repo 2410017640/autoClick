@@ -1232,17 +1232,36 @@ class StepEditDialog(tk.Toplevel):
                         pass
                         
     def _pick_position(self):
-        """取点"""
+        """取点 - 使用全屏透明窗口方式"""
         self.iconify()
-        time.sleep(0.2)
+        time.sleep(0.3)
         
-        def on_click(x, y, button, pressed):
-            if pressed:
-                self.after(0, lambda: self._finish_pick(int(x), int(y)))
-                return False
+        # 创建全屏透明窗口
+        pick_win = tk.Toplevel()
+        pick_win.attributes('-fullscreen', True)
+        pick_win.attributes('-topmost', True)
+        pick_win.attributes('-alpha', 0.01)  # 几乎透明
+        pick_win.configure(bg='black', cursor='cross')
         
-        self._pick_listener = pynput_mouse.Listener(on_click=on_click)
-        self._pick_listener.start()
+        # 提示标签
+        label = tk.Label(pick_win, text="点击屏幕任意位置获取坐标 (Esc取消)", 
+                        fg='white', bg='black', font=('Arial', 14))
+        label.place(relx=0.5, rely=0.05, anchor='center')
+        
+        def on_click(event):
+            x, y = event.x_root, event.y_root
+            self.var_pos_x.set(x)
+            self.var_pos_y.set(y)
+            pick_win.destroy()
+            self.deiconify()
+            
+        def on_escape(event):
+            pick_win.destroy()
+            self.deiconify()
+        
+        pick_win.bind('<Button-1>', on_click)
+        pick_win.bind('<Escape>', on_escape)
+        pick_win.focus_set()
         
     def _finish_pick(self, x, y):
         self.var_pos_x.set(x)
@@ -1252,17 +1271,34 @@ class StepEditDialog(tk.Toplevel):
             self._pick_listener.stop()
             
     def _pick_drag_start(self):
-        """取拖动起点"""
+        """取拖动起点 - 使用全屏透明窗口方式"""
         self.iconify()
-        time.sleep(0.2)
+        time.sleep(0.3)
         
-        def on_click(x, y, button, pressed):
-            if pressed:
-                self.after(0, lambda: self._finish_pick_drag_start(int(x), int(y)))
-                return False
+        pick_win = tk.Toplevel()
+        pick_win.attributes('-fullscreen', True)
+        pick_win.attributes('-topmost', True)
+        pick_win.attributes('-alpha', 0.01)
+        pick_win.configure(bg='black', cursor='cross')
         
-        self._pick_start_listener = pynput_mouse.Listener(on_click=on_click)
-        self._pick_start_listener.start()
+        label = tk.Label(pick_win, text="点击选择拖动起点 (Esc取消)", 
+                        fg='white', bg='black', font=('Arial', 14))
+        label.place(relx=0.5, rely=0.05, anchor='center')
+        
+        def on_click(event):
+            x, y = event.x_root, event.y_root
+            self.var_drag_start_x.set(x)
+            self.var_drag_start_y.set(y)
+            pick_win.destroy()
+            self.deiconify()
+            
+        def on_escape(event):
+            pick_win.destroy()
+            self.deiconify()
+        
+        pick_win.bind('<Button-1>', on_click)
+        pick_win.bind('<Escape>', on_escape)
+        pick_win.focus_set()
         
     def _finish_pick_drag_start(self, x, y):
         self.var_drag_start_x.set(x)
@@ -1272,24 +1308,34 @@ class StepEditDialog(tk.Toplevel):
             self._pick_start_listener.stop()
             
     def _pick_drag_end(self):
-        """取拖动终点"""
+        """取拖动终点 - 使用全屏透明窗口方式"""
         self.iconify()
-        time.sleep(0.2)
+        time.sleep(0.3)
         
-        def on_click(x, y, button, pressed):
-            if pressed:
-                self.after(0, lambda: self._finish_pick_drag_end(int(x), int(y)))
-                return False
+        pick_win = tk.Toplevel()
+        pick_win.attributes('-fullscreen', True)
+        pick_win.attributes('-topmost', True)
+        pick_win.attributes('-alpha', 0.01)
+        pick_win.configure(bg='black', cursor='cross')
         
-        self._pick_end_listener = pynput_mouse.Listener(on_click=on_click)
-        self._pick_end_listener.start()
+        label = tk.Label(pick_win, text="点击选择拖动终点 (Esc取消)", 
+                        fg='white', bg='black', font=('Arial', 14))
+        label.place(relx=0.5, rely=0.05, anchor='center')
         
-    def _finish_pick_drag_end(self, x, y):
-        self.var_drag_end_x.set(x)
-        self.var_drag_end_y.set(y)
-        self.deiconify()
-        if hasattr(self, '_pick_end_listener'):
-            self._pick_end_listener.stop()
+        def on_click(event):
+            x, y = event.x_root, event.y_root
+            self.var_drag_end_x.set(x)
+            self.var_drag_end_y.set(y)
+            pick_win.destroy()
+            self.deiconify()
+            
+        def on_escape(event):
+            pick_win.destroy()
+            self.deiconify()
+        
+        pick_win.bind('<Button-1>', on_click)
+        pick_win.bind('<Escape>', on_escape)
+        pick_win.focus_set()
             
     def _capture_region(self):
         """框选截图"""

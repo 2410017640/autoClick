@@ -69,6 +69,15 @@ from PIL import Image, ImageTk, ImageDraw
 pyautogui.FAILSAFE = True
 
 # pynput 特殊键 → pyautogui 按键名 映射
+# 修饰键统一映射（左右都映射到同一个标准名，供 hotkey 使用）
+_MODIFIER_UNIFY = {
+    'Key.shift_l': 'Key.shift', 'Key.shift_r': 'Key.shift',
+    'Key.ctrl_l':  'Key.ctrl',  'Key.ctrl_r':  'Key.ctrl',
+    'Key.alt_l':   'Key.alt',   'Key.alt_r':   'Key.alt',
+    'Key.alt_gr':  'Key.alt',
+    'Key.cmd_l':   'Key.cmd',   'Key.cmd_r':   'Key.cmd',
+}
+
 _PYNPUT_KEY_MAP = {
     'Key.space':     'space',
     'Key.enter':     'enter',
@@ -83,6 +92,7 @@ _PYNPUT_KEY_MAP = {
     'Key.alt':       'alt',
     'Key.alt_l':     'altleft',
     'Key.alt_r':     'altright',
+    'Key.alt_gr':    'alt',
     'Key.backspace': 'backspace',
     'Key.delete':    'delete',
     'Key.insert':    'insert',
@@ -103,6 +113,9 @@ _PYNPUT_KEY_MAP = {
     'Key.cmd':       'win',
     'Key.cmd_l':     'winleft',
     'Key.cmd_r':     'winright',
+    'Key.print_screen': 'printscreen',
+    'Key.pause':     'pause',
+    'Key.menu':      'apps',
 }
 
 def _resolve_key(key_str):
@@ -792,9 +805,14 @@ class Recorder:
             self._ml = pynput_mouse.Listener(on_click=_on_click)
         self._ml.start()
 
-        # 键盘录制
+        # 键盘录制（追踪修饰键状态，支持组合键）
         self._kl = None
         if record_key:
+            _mods_pressed = set()  # 当前按下的修饰键（统一后）
+            _MODIFIER_KEYS = {'Key.ctrl_l', 'Key.ctrl_r', 'Key.shift_l', 'Key.shift_r',
+                              'Key.alt_l', 'Key.alt_r', 'Key.cmd', 'Key.cmd_l', 'Key.cmd_r',
+                              'Key.alt_gr', 'Key.shift', 'Key.ctrl', 'Key.alt'}
+
             def _on_press(key):
                 if not self._recording:
                     return False
@@ -802,15 +820,29 @@ class Recorder:
                     key_str = key.char
                 except AttributeError:
                     key_str = str(key)
+                key_name = str(key)
+                now = round(time.time() - self._t0, 3)
+                if key_name in _MODIFIER_KEYS:
+                    # 修饰键：统一左右为标准名
+                    _mods_pressed.add(_MODIFIER_UNIFY.get(key_name, key_name))
+                    return True
+                # 普通按键（含特殊键如 enter/space/f1 等）
+                mods_list = sorted(_mods_pressed)
                 ev = {
                     'type': 'key',
                     'key': key_str,
-                    'time': round(time.time() - self._t0, 3),
+                    'mods': mods_list,  # 修饰键列表（已统一）
+                    'time': now,
                 }
                 _emit(ev)
                 return True
 
-            self._kl = pynput_keyboard.Listener(on_press=_on_press)
+            def _on_release(key):
+                key_name = str(key)
+                unified = _MODIFIER_UNIFY.get(key_name, key_name)
+                _mods_pressed.discard(unified)
+
+            self._kl = pynput_keyboard.Listener(on_press=_on_press, on_release=_on_release)
             self._kl.start()
 
     def stop_recording(self):
@@ -897,7 +929,17 @@ class Recorder:
                             key_str = ev.get('key', '')
                             if key_str:
                                 try:
-                                    pyautogui.press(_resolve_key(key_str))
+                                    mods = ev.get('mods', [])
+                                    if mods:
+                                        # 组合键：先转修饰键名，再转目标键名
+                                        mod_keys = [_resolve_key(m) for m in mods if _resolve_key(m)]
+                                        resolved = _resolve_key(key_str)
+                                        if mod_keys and resolved:
+                                            pyautogui.hotkey(*mod_keys, resolved)
+                                        else:
+                                            pyautogui.press(resolved)
+                                    else:
+                                        pyautogui.press(_resolve_key(key_str))
                                 except Exception:
                                     pass
                         if on_progress:
@@ -3087,7 +3129,12 @@ class AutoClickerApp:
             time_str = f"{ev['time']:.3f} ({ev.get('duration', 0):.3f}s)"
         elif ev_type == 'key':
             type_str = '按键'
-            pos_str = '-'
+            key_display = ev.get('key', '')
+            mods = ev.get('mods', [])
+            if mods:
+                mod_short = [m.replace('Key.', '') for m in mods]
+                key_display = '+'.join(mod_short + [key_display])
+            pos_str = key_display
             time_str = f"{ev['time']:.3f}"
             btn_cn = '-'
         elif ev_type == 'move':

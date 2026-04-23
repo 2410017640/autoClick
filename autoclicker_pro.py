@@ -625,6 +625,8 @@ class Recorder:
         self._events    = []
         self._t0        = time.time()
         self._on_event  = on_event
+        # 记录录制时的分辨率
+        self._rec_w, self._rec_h = pyautogui.size().width, pyautogui.size().height
 
         # 拖动检测状态
         self._drag_state = None
@@ -729,13 +731,23 @@ class Recorder:
             self._kl = None
 
     def play(self, events=None, speed=1.0, loop=False,
-             on_progress=None, on_done=None):
+             on_progress=None, on_done=None, rec_resolution=None):
         if self._playing:
             return
         ev_list = events if events is not None else self._events
         if not ev_list:
             return
         self._playing = True
+
+        # 分辨率自适应缩放
+        cur_w, cur_h = pyautogui.size().width, pyautogui.size().height
+        if rec_resolution:
+            rec_w, rec_h = rec_resolution
+        else:
+            rec_w, rec_h = getattr(self, '_rec_w', cur_w), getattr(self, '_rec_h', cur_h)
+        need_scale = (rec_w != cur_w or rec_h != cur_h) and rec_w > 0 and rec_h > 0
+        sx = cur_w / rec_w if need_scale else 1.0
+        sy = cur_h / rec_h if need_scale else 1.0
 
         def _run():
             err = None
@@ -753,26 +765,29 @@ class Recorder:
                             return
                         if ev['type'] == 'click':
                             pyautogui.click(
-                                x=ev['x'], y=ev['y'],
+                                x=int(ev['x'] * sx),
+                                y=int(ev['y'] * sy),
                                 button=ev.get('button', 'left')
                             )
                         elif ev['type'] == 'drag':
+                            x0 = int(ev['x0'] * sx)
+                            y0 = int(ev['y0'] * sy)
+                            x1 = int(ev['x1'] * sx)
+                            y1 = int(ev['y1'] * sy)
                             dur = ev.get('duration', 0.5)
                             if dur > 0:
                                 pyautogui.moveTo(
-                                    ev['x0'], ev['y0'],
+                                    x0, y0,
                                     duration=min(dur / speed, 3.0)
                                 )
                                 pyautogui.drag(
-                                    ev['x1'] - ev['x0'],
-                                    ev['y1'] - ev['y0'],
+                                    x1 - x0, y1 - y0,
                                     duration=min(dur / speed, 3.0),
                                     button=ev.get('button', 'left')
                                 )
                             else:
                                 pyautogui.drag(
-                                    ev['x1'] - ev['x0'],
-                                    ev['y1'] - ev['y0'],
+                                    x1 - x0, y1 - y0,
                                     duration=0.2,
                                     button=ev.get('button', 'left')
                                 )
@@ -818,11 +833,15 @@ class Recorder:
             return None
         name = self._safe_name(name)
         path = self.rec_dir / f"{name}.json"
+        rec_w, rec_h = getattr(self, '_rec_w', 0), getattr(self, '_rec_h', 0)
+        if rec_w == 0:
+            rec_w, rec_h = pyautogui.size().width, pyautogui.size().height
         data = {
             'name':        name,
             'created':     datetime.now().isoformat(),
             'event_count': len(ev_list),
             'duration':    round(ev_list[-1]['time'], 3),
+            'resolution':  [rec_w, rec_h],
             'events':      ev_list,
         }
         with open(path, 'w', encoding='utf-8') as f:
@@ -840,12 +859,13 @@ class Recorder:
             try:
                 d = self.load(p)
                 result.append({
-                    'path':     str(p),
-                    'name':     d.get('name', p.stem),
-                    'created':  d.get('created', ''),
-                    'count':    d.get('event_count', 0),
-                    'duration': d.get('duration', 0),
-                    'events':   d.get('events', []),
+                    'path':        str(p),
+                    'name':        d.get('name', p.stem),
+                    'created':     d.get('created', ''),
+                    'count':       d.get('event_count', 0),
+                    'duration':    d.get('duration', 0),
+                    'resolution':  d.get('resolution', None),
+                    'events':      d.get('events', []),
                 })
             except Exception:
                 pass
@@ -2106,6 +2126,7 @@ class AutoClickerApp:
                                         state='disabled')
         self.btn_rec_stop.pack(side='left', padx=4)
         self.sv_rec_status = tk.StringVar(value="未录制")
+        cur_w, cur_h = pyautogui.size().width, pyautogui.size().height
         ttk.Label(bf, textvariable=self.sv_rec_status,
                   foreground='gray').pack(side='right')
 
@@ -2204,17 +2225,19 @@ class AutoClickerApp:
                    width=14).pack(side='left', padx=4)
 
         # 列表
-        cols = ('name', 'count', 'duration', 'created')
+        cols = ('name', 'count', 'duration', 'res', 'created')
         self.tree_files = ttk.Treeview(parent, columns=cols,
                                         show='headings', height=14)
         self.tree_files.heading('name',    text='名称')
         self.tree_files.heading('count',   text='事件数')
         self.tree_files.heading('duration', text='时长(s)')
+        self.tree_files.heading('res',     text='录制分辨率')
         self.tree_files.heading('created', text='创建时间')
-        self.tree_files.column('name',    width=200)
-        self.tree_files.column('count',   width=70,  anchor='center')
-        self.tree_files.column('duration', width=70,  anchor='center')
-        self.tree_files.column('created', width=170)
+        self.tree_files.column('name',    width=180)
+        self.tree_files.column('count',   width=60,  anchor='center')
+        self.tree_files.column('duration', width=60,  anchor='center')
+        self.tree_files.column('res',     width=100, anchor='center')
+        self.tree_files.column('created', width=150)
 
         sb = ttk.Scrollbar(parent, orient='vertical',
                            command=self.tree_files.yview)
@@ -2793,7 +2816,7 @@ class AutoClickerApp:
     def _start_rec(self):
         self.btn_rec_start.config(state='disabled')
         self.btn_rec_stop.config(state='normal')
-        self.sv_rec_status.set("🔴 录制中…")
+        self.sv_rec_status.set(f"🔴 录制中… ({cur_w}×{cur_h})")
         for item in self.tree_events.get_children():
             self.tree_events.delete(item)
 
@@ -2801,14 +2824,12 @@ class AutoClickerApp:
             if action == 'add':
                 self.root.after(0, lambda: self._add_event_row(ev))
 
-        # 最小化主窗口，避免遮挡录制目标
-        self.root.iconify()
-        self.root.after(300, lambda: self.recorder.start_recording(
+        self.recorder.start_recording(
             on_event,
             record_mouse=self.var_rec_mouse.get(),
             record_key=self.var_rec_key.get(),
             record_drag=self.var_rec_drag.get(),
-        ))
+        )
 
     def _add_event_row(self, ev):
         seq = len(self.recorder.events)
@@ -2836,11 +2857,12 @@ class AutoClickerApp:
 
     def _stop_rec(self):
         self.recorder.stop_recording()
-        self.root.deiconify()
         self.btn_rec_start.config(state='normal')
         self.btn_rec_stop.config(state='disabled')
         count = len(self.recorder.events)
-        self.sv_rec_status.set(f"已录制 {count} 个事件")
+        rec_w = getattr(self.recorder, '_rec_w', '?')
+        rec_h = getattr(self.recorder, '_rec_h', '?')
+        self.sv_rec_status.set(f"已录制 {count} 个事件 ({rec_w}×{rec_h})")
         self.sv_status.set(f"✅ 录制完成，共 {count} 个事件")
         self.var_save_name.set(f"录制_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
 
@@ -2854,8 +2876,6 @@ class AutoClickerApp:
         self.btn_play.config(state='disabled')
         self.btn_stop_play.config(state='normal')
         self.sv_status.set("🔄 复现中…")
-        # 最小化主窗口，避免遮挡复现目标
-        self.root.iconify()
 
         def on_progress(i, total):
             self.sv_play_progress.set(f"复现进度: {i}/{total}")
@@ -2864,10 +2884,10 @@ class AutoClickerApp:
             self.root.after(0, lambda: self._play_finished(err))
 
         self.recorder.play(events=events, speed=self.var_play_speed.get(),
-                          loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done)
+                          loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done,
+                          rec_resolution=(self.recorder._rec_w, self.recorder._rec_h))
 
     def _play_finished(self, err):
-        self.root.deiconify()
         self.btn_play.config(state='normal')
         self.btn_stop_play.config(state='disabled')
         self.sv_play_progress.set("")
@@ -2878,7 +2898,6 @@ class AutoClickerApp:
 
     def _stop_play_rec(self):
         self.recorder.stop_playback()
-        self.root.deiconify()
         self.sv_status.set("✅ 已停止复现")
 
     # ════════════════ 保存录制 ════════════════
@@ -2905,12 +2924,20 @@ class AutoClickerApp:
         for item in self.tree_files.get_children():
             self.tree_files.delete(item)
         self._recordings_cache = self.recorder.list_all()
+        cur_w, cur_h = pyautogui.size().width, pyautogui.size().height
         for rec in self._recordings_cache:
             created = (rec['created'][:19].replace('T', ' ')
                        if rec['created'] else '-')
+            res = rec.get('resolution')
+            if res and len(res) == 2:
+                res_str = f"{res[0]}×{res[1]}"
+                if res[0] != cur_w or res[1] != cur_h:
+                    res_str += " ⚠️"
+            else:
+                res_str = "未知"
             self.tree_files.insert('', 'end', iid=rec['path'],
                                    values=(rec['name'], rec['count'],
-                                          f"{rec['duration']:.1f}", created))
+                                          f"{rec['duration']:.1f}", res_str, created))
 
     def _open_folder(self):
         os.startfile(str(self.recorder.rec_dir))
@@ -2955,8 +2982,15 @@ class AutoClickerApp:
         def on_done(err):
             self.root.after(0, lambda: self._play_finished(err))
 
+        rec_res = rec.get('resolution')
         self.recorder.play(events=events, speed=self.var_play_speed.get(),
-                          loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done)
+                          loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done,
+                          rec_resolution=tuple(rec_res) if rec_res else None)
+        cur_w, cur_h = pyautogui.size().width, pyautogui.size().height
+        if rec_res and (rec_res[0] != cur_w or rec_res[1] != cur_h):
+            self.sv_status.set(f"🔄 复现: {rec['name']} (自动缩放 {rec_res[0]}×{rec_res[1]} → {cur_w}×{cur_h})")
+        else:
+            self.sv_status.set(f"🔄 复现: {rec['name']}")
 
     def _rename_file(self):
         rec = self._get_selected_rec()

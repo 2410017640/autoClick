@@ -1928,6 +1928,7 @@ class AutoClickerApp:
         # 快捷键设置（持久化）
         self.hotkey_file = Path(__file__).parent / 'hotkey_settings.json'
         self.hotkeys = self._load_hotkeys()
+        self.sv_hotkey_hint = tk.StringVar(value="")
 
         self._build_ui()
         self._start_kb_listener()
@@ -1979,7 +1980,6 @@ class AutoClickerApp:
         sbar.pack(fill='x')
         self.sv_status = tk.StringVar(value="✅ 就绪")
         self.sv_pos = tk.StringVar(value="")
-        self.sv_hotkey_hint = tk.StringVar(value="")
         self._update_hotkey_hint()
         ttk.Label(sbar, textvariable=self.sv_status).pack(side='left')
         ttk.Label(sbar, textvariable=self.sv_pos,
@@ -2801,12 +2801,14 @@ class AutoClickerApp:
             if action == 'add':
                 self.root.after(0, lambda: self._add_event_row(ev))
 
-        self.recorder.start_recording(
+        # 最小化主窗口，避免遮挡录制目标
+        self.root.iconify()
+        self.root.after(300, lambda: self.recorder.start_recording(
             on_event,
             record_mouse=self.var_rec_mouse.get(),
             record_key=self.var_rec_key.get(),
             record_drag=self.var_rec_drag.get(),
-        )
+        ))
 
     def _add_event_row(self, ev):
         seq = len(self.recorder.events)
@@ -2834,6 +2836,7 @@ class AutoClickerApp:
 
     def _stop_rec(self):
         self.recorder.stop_recording()
+        self.root.deiconify()
         self.btn_rec_start.config(state='normal')
         self.btn_rec_stop.config(state='disabled')
         count = len(self.recorder.events)
@@ -2851,6 +2854,8 @@ class AutoClickerApp:
         self.btn_play.config(state='disabled')
         self.btn_stop_play.config(state='normal')
         self.sv_status.set("🔄 复现中…")
+        # 最小化主窗口，避免遮挡复现目标
+        self.root.iconify()
 
         def on_progress(i, total):
             self.sv_play_progress.set(f"复现进度: {i}/{total}")
@@ -2862,6 +2867,7 @@ class AutoClickerApp:
                           loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done)
 
     def _play_finished(self, err):
+        self.root.deiconify()
         self.btn_play.config(state='normal')
         self.btn_stop_play.config(state='disabled')
         self.sv_play_progress.set("")
@@ -2872,6 +2878,7 @@ class AutoClickerApp:
 
     def _stop_play_rec(self):
         self.recorder.stop_playback()
+        self.root.deiconify()
         self.sv_status.set("✅ 已停止复现")
 
     # ════════════════ 保存录制 ════════════════

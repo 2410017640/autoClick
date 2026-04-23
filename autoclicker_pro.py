@@ -2986,10 +2986,17 @@ class AutoClickerApp:
         self._pick_win.attributes('-alpha', 0.01)  # 几乎透明
         self._pick_win.configure(bg='black', cursor='cross')
         
+        coord_label = tk.Label(self._pick_win, text="X: -, Y: -",
+                              fg='yellow', bg='black', font=('Consolas', 16))
+        coord_label.place(relx=0.5, rely=0.15, anchor='center')
+        
         # 提示标签
         label = tk.Label(self._pick_win, text="点击屏幕任意位置获取坐标 (Esc取消)", 
                         fg='white', bg='black', font=('Arial', 14))
         label.place(relx=0.5, rely=0.05, anchor='center')
+        
+        def on_motion(event):
+            coord_label.config(text=f"X: {event.x_root}, Y: {event.y_root}")
         
         def on_click(event):
             self._picking = False
@@ -3002,6 +3009,7 @@ class AutoClickerApp:
             self._cancel_pick()
             
         self._pick_win.bind('<Button-1>', on_click)
+        self._pick_win.bind('<Motion>', on_motion)
         self._pick_win.bind('<Escape>', on_escape)
         self._pick_win.focus_set()
 
@@ -3018,8 +3026,9 @@ class AutoClickerApp:
             self._pick_win.destroy()
             self._pick_win = None
         self.btn_pick.config(text="📍 取点")
+        if self.root.state() == 'iconic':
+            self.root.deiconify()
         self.sv_status.set("✅ 已取消取点")
-        self.root.deiconify()
 
     def _start_click(self):
         try:

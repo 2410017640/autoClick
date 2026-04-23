@@ -1825,7 +1825,7 @@ class AutoClickerApp:
         self.flow_project = FlowProject()
 
         self._picking = False
-        self._pick_ml = None
+        self._pick_win = None
         self._kb_l = None
         self._clipboard_steps = []
 
@@ -2517,15 +2517,33 @@ class AutoClickerApp:
         self.btn_pick.config(text="⏳ 点击屏幕取点...")
         self.sv_status.set("📍 请点击屏幕任意位置取点 (Esc 取消)")
         self.root.iconify()
-
-        def _on_click(x, y, button, pressed):
-            if pressed:
-                self._picking = False
-                self.root.after(0, lambda: self._finish_pick(int(x), int(y)))
-                return False
-
-        self._pick_ml = pynput_mouse.Listener(on_click=_on_click)
-        self._pick_ml.start()
+        time.sleep(0.3)
+        
+        # 创建全屏透明窗口
+        self._pick_win = tk.Toplevel(self.root)
+        self._pick_win.attributes('-fullscreen', True)
+        self._pick_win.attributes('-topmost', True)
+        self._pick_win.attributes('-alpha', 0.01)  # 几乎透明
+        self._pick_win.configure(bg='black', cursor='cross')
+        
+        # 提示标签
+        label = tk.Label(self._pick_win, text="点击屏幕任意位置获取坐标 (Esc取消)", 
+                        fg='white', bg='black', font=('Arial', 14))
+        label.place(relx=0.5, rely=0.05, anchor='center')
+        
+        def on_click(event):
+            self._picking = False
+            x, y = event.x_root, event.y_root
+            self._pick_win.destroy()
+            self._pick_win = None
+            self._finish_pick(x, y)
+            
+        def on_escape(event):
+            self._cancel_pick()
+            
+        self._pick_win.bind('<Button-1>', on_click)
+        self._pick_win.bind('<Escape>', on_escape)
+        self._pick_win.focus_set()
 
     def _finish_pick(self, x, y):
         self.var_x.set(x)
@@ -2536,9 +2554,9 @@ class AutoClickerApp:
 
     def _cancel_pick(self):
         self._picking = False
-        if self._pick_ml:
-            self._pick_ml.stop()
-            self._pick_ml = None
+        if self._pick_win:
+            self._pick_win.destroy()
+            self._pick_win = None
         self.btn_pick.config(text="📍 取点")
         self.sv_status.set("✅ 已取消取点")
         self.root.deiconify()

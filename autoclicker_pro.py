@@ -23,6 +23,8 @@ import sys
 import subprocess
 import uuid
 import copy
+import random
+import math
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Any, Callable, Tuple
@@ -65,6 +67,51 @@ from PIL import Image, ImageTk, ImageDraw
 
 # pyautogui 安全设置
 pyautogui.FAILSAFE = True
+
+# pynput 特殊键 → pyautogui 按键名 映射
+_PYNPUT_KEY_MAP = {
+    'Key.space':     'space',
+    'Key.enter':     'enter',
+    'Key.tab':       'tab',
+    'Key.esc':       'esc',
+    'Key.shift':     'shift',
+    'Key.shift_l':   'shiftleft',
+    'Key.shift_r':   'shiftright',
+    'Key.ctrl':      'ctrl',
+    'Key.ctrl_l':    'ctrlleft',
+    'Key.ctrl_r':    'ctrlright',
+    'Key.alt':       'alt',
+    'Key.alt_l':     'altleft',
+    'Key.alt_r':     'altright',
+    'Key.backspace': 'backspace',
+    'Key.delete':    'delete',
+    'Key.insert':    'insert',
+    'Key.home':      'home',
+    'Key.end':       'end',
+    'Key.up':        'up',
+    'Key.down':      'down',
+    'Key.left':      'left',
+    'Key.right':     'right',
+    'Key.page_up':   'pageup',
+    'Key.page_down': 'pagedown',
+    'Key.caps_lock': 'capslock',
+    'Key.num_lock':  'numlock',
+    'Key.scroll_lock':'scrolllock',
+    'Key.f1':  'f1',  'Key.f2':  'f2',  'Key.f3':  'f3',  'Key.f4':  'f4',
+    'Key.f5':  'f5',  'Key.f6':  'f6',  'Key.f7':  'f7',  'Key.f8':  'f8',
+    'Key.f9':  'f9',  'Key.f10': 'f10', 'Key.f11': 'f11', 'Key.f12': 'f12',
+    'Key.cmd':       'win',
+    'Key.cmd_l':     'winleft',
+    'Key.cmd_r':     'winright',
+}
+
+def _resolve_key(key_str):
+    """将 pynput 格式的按键名转换为 pyautogui 可识别的按键名。"""
+    mapped = _PYNPUT_KEY_MAP.get(key_str)
+    if mapped:
+        return mapped
+    # 普通字符键直接返回
+    return key_str
 pyautogui.PAUSE  = 0.001
 
 # ═══════════════════════════════════════════════════════════════
@@ -136,6 +183,7 @@ class FlowStep:
         self.key_code = ""                # 单键
         self.combo_keys = []              # ['ctrl', 'shift', 'a']
         self.scroll_amount = 0            # 正数向上，负数向下
+        self.click_radius = 0             # 容错半径(像素), 0=精确点击
         # 拖动操作设置
         self.drag_start = None            # (x, y) 拖动起点
         self.drag_end = None              # (x, y) 拖动终点
@@ -173,6 +221,7 @@ class FlowStep:
             'key_code': self.key_code,
             'combo_keys': self.combo_keys,
             'scroll_amount': self.scroll_amount,
+            'click_radius': self.click_radius,
             'drag_start': self.drag_start,
             'drag_end': self.drag_end,
             'drag_duration': self.drag_duration,
@@ -212,6 +261,7 @@ class FlowStep:
         step.key_code = d.get('key_code', '')
         step.combo_keys = d.get('combo_keys', [])
         step.scroll_amount = d.get('scroll_amount', 0)
+        step.click_radius = d.get('click_radius', 0)
         step.drag_start = tuple(d.get('drag_start')) if d.get('drag_start') else None
         step.drag_end = tuple(d.get('drag_end')) if d.get('drag_end') else None
         step.drag_duration = d.get('drag_duration', 0.5)
@@ -442,19 +492,20 @@ class FlowEngine:
         # 执行操作
         if success and step.operation != OP_WAIT:
             click_pos = step.click_position if step.click_position else matched_pos
+            dx, dy = ClickEngine._random_offset(step.click_radius)
             
             if step.operation == OP_CLICK:
-                pyautogui.click(x=int(click_pos[0]), y=int(click_pos[1]), button=step.click_button)
+                pyautogui.click(x=int(click_pos[0]) + dx, y=int(click_pos[1]) + dy, button=step.click_button)
             elif step.operation == OP_DOUBLE_CLICK:
-                pyautogui.doubleClick(x=int(click_pos[0]), y=int(click_pos[1]), button=step.click_button)
+                pyautogui.doubleClick(x=int(click_pos[0]) + dx, y=int(click_pos[1]) + dy, button=step.click_button)
             elif step.operation == OP_MIDDLE_CLICK:
-                pyautogui.click(x=int(click_pos[0]), y=int(click_pos[1]), button='middle')
+                pyautogui.click(x=int(click_pos[0]) + dx, y=int(click_pos[1]) + dy, button='middle')
             elif step.operation == OP_KEY:
                 pyautogui.press(step.key_code)
             elif step.operation == OP_COMBO_KEY:
                 pyautogui.hotkey(*step.combo_keys)
             elif step.operation == OP_SCROLL:
-                pyautogui.scroll(step.scroll_amount, x=int(click_pos[0]), y=int(click_pos[1]))
+                pyautogui.scroll(step.scroll_amount, x=int(click_pos[0]) + dx, y=int(click_pos[1]) + dy)
             elif step.operation == OP_DRAG:
                 # 拖动操作
                 if step.drag_end:
@@ -528,13 +579,22 @@ class ClickEngine:
         self._running = False
         self._lock = threading.Lock()
 
+    @staticmethod
+    def _random_offset(radius):
+        """在以原点为圆心、radius为半径的圆内均匀随机取一个偏移"""
+        if radius <= 0:
+            return 0, 0
+        angle = random.uniform(0, 2 * math.pi)
+        r = radius * math.sqrt(random.random())  # 均匀面积分布
+        return int(round(r * math.cos(angle))), int(round(r * math.sin(angle)))
+
     @property
     def running(self):
         with self._lock:
             return self._running
 
     def start(self, x, y, count, interval_ms,
-              button='left', speed=1.0,
+              button='left', speed=1.0, radius=0,
               on_progress=None, on_done=None):
         with self._lock:
             if self._running:
@@ -543,7 +603,7 @@ class ClickEngine:
 
         threading.Thread(
             target=self._loop,
-            args=(x, y, count, interval_ms, button, speed,
+            args=(x, y, count, interval_ms, button, speed, radius,
                   on_progress, on_done),
             daemon=True
         ).start()
@@ -553,7 +613,7 @@ class ClickEngine:
             self._running = False
 
     def _loop(self, x, y, count, interval_ms, button, speed,
-              on_progress, on_done):
+              radius, on_progress, on_done):
         interval = max(interval_ms / 1000.0 / speed, 0.005)
         clicked = 0
         err = None
@@ -564,7 +624,8 @@ class ClickEngine:
                         break
                 if 0 < count <= clicked:
                     break
-                pyautogui.click(x=int(x), y=int(y), button=button)
+                dx, dy = self._random_offset(radius)
+                pyautogui.click(x=int(x) + dx, y=int(y) + dy, button=button)
                 clicked += 1
                 if on_progress:
                     try:
@@ -763,7 +824,8 @@ class Recorder:
             self._kl = None
 
     def play(self, events=None, speed=1.0, loop=False,
-             on_progress=None, on_done=None, rec_resolution=None):
+             on_progress=None, on_done=None, rec_resolution=None,
+             radius=0):
         if self._playing:
             return
         ev_list = events if events is not None else self._events
@@ -796,9 +858,11 @@ class Recorder:
                         if not self._playing:
                             return
                         if ev['type'] == 'click':
+                            cx, cy = int(ev['x'] * sx), int(ev['y'] * sy)
+                            dx, dy = ClickEngine._random_offset(radius)
                             pyautogui.click(
-                                x=int(ev['x'] * sx),
-                                y=int(ev['y'] * sy),
+                                x=cx + dx,
+                                y=cy + dy,
                                 button=ev.get('button', 'left')
                             )
                         elif ev['type'] == 'drag':
@@ -833,7 +897,7 @@ class Recorder:
                             key_str = ev.get('key', '')
                             if key_str:
                                 try:
-                                    pyautogui.press(key_str)
+                                    pyautogui.press(_resolve_key(key_str))
                                 except Exception:
                                     pass
                         if on_progress:
@@ -1110,7 +1174,20 @@ class StepEditDialog(tk.Toplevel):
         for txt, val in [("左键", "left"), ("右键", "right")]:
             ttk.Radiobutton(self.btn_frame, text=txt, variable=self.var_click_button,
                            value=val).pack(side='left', padx=12)
-        
+
+        # 容错范围
+        self.radius_frame = ttk.LabelFrame(parent, text="容错范围", padding=8)
+        self.radius_frame.pack(fill='x', pady=4)
+
+        fr = ttk.Frame(self.radius_frame)
+        fr.pack(fill='x')
+        ttk.Label(fr, text="随机偏移半径:").pack(side='left')
+        self.var_click_radius = tk.IntVar(value=0)
+        ttk.Spinbox(fr, from_=0, to=500, textvariable=self.var_click_radius,
+                     width=10).pack(side='left', padx=4)
+        ttk.Label(fr, text="像素 (0=精确点击，模拟真人随机偏移)",
+                  foreground='gray').pack(side='left')
+
         # 按键设置
         self.key_frame = ttk.LabelFrame(parent, text="按键设置", padding=8)
         self.key_frame.pack(fill='x', pady=4)
@@ -1269,6 +1346,7 @@ class StepEditDialog(tk.Toplevel):
             self.var_click_x.set(s.click_position[0])
             self.var_click_y.set(s.click_position[1])
         self.var_click_button.set(s.click_button)
+        self.var_click_radius.set(s.click_radius)
         self.var_key.set(s.key_code)
         self.var_combo_keys.set(','.join(s.combo_keys))
         self.var_scroll.set(s.scroll_amount)
@@ -1606,6 +1684,7 @@ class StepEditDialog(tk.Toplevel):
         else:
             s.click_position = (self.var_click_x.get(), self.var_click_y.get())
         s.click_button = self.var_click_button.get()
+        s.click_radius = self.var_click_radius.get()
         s.key_code = self.var_key.get()
         s.combo_keys = [k.strip() for k in self.var_combo_keys.get().split(',') if k.strip()]
         s.scroll_amount = self.var_scroll.get()
@@ -2130,6 +2209,16 @@ class AutoClickerApp:
             )
         )
 
+        # 容错范围（随机偏移半径）
+        f = ttk.Frame(lf_set); f.pack(fill='x', pady=3)
+        ttk.Label(f, text="容错范围:", width=10,
+                  anchor='e').pack(side='left')
+        self.var_radius = tk.IntVar(value=0)
+        ttk.Spinbox(f, from_=0, to=500, textvariable=self.var_radius,
+                     width=10).pack(side='left')
+        ttk.Label(f, text="像素 (0=精确点击)",
+                  foreground='gray').pack(side='left', padx=6)
+
         # ---- 操作按钮 ----
         bf = ttk.Frame(parent)
         bf.grid(row=row, column=0, pady=10)
@@ -2330,6 +2419,16 @@ class AutoClickerApp:
         self.var_loop = tk.BooleanVar(value=False)
         ttk.Checkbutton(f, text="循环播放",
                         variable=self.var_loop).pack(side='left', padx=12)
+
+        # 容错范围
+        f2 = ttk.Frame(lf3); f2.pack(fill='x', pady=3)
+        ttk.Label(f2, text="容错范围:", width=10,
+                  anchor='e').pack(side='left')
+        self.var_play_radius = tk.IntVar(value=0)
+        ttk.Spinbox(f2, from_=0, to=500, textvariable=self.var_play_radius,
+                     width=10).pack(side='left')
+        ttk.Label(f2, text="像素 (0=精确点击)",
+                  foreground='gray').pack(side='left', padx=6)
 
         # 按钮
         bf2 = ttk.Frame(lf3); bf2.pack(fill='x', pady=(6, 0))
@@ -2853,6 +2952,7 @@ class AutoClickerApp:
             button   = self.var_btn.get()
             speed    = self.var_speed.get()
             ctype    = self.var_click_type.get()
+            radius   = self.var_radius.get()
         except tk.TclError:
             messagebox.showwarning("参数错误", "请检查输入参数是否正确")
             return
@@ -2885,11 +2985,11 @@ class AutoClickerApp:
             self.root.after(0, lambda: self._click_finished(err))
 
         if ctype == 'double':
-            self._start_double_click(x, y, count, interval, button, speed, on_progress, on_done)
+            self._start_double_click(x, y, count, interval, button, speed, radius, on_progress, on_done)
         else:
-            self.engine.start(x, y, actual_count, interval, button, speed, on_progress, on_done)
+            self.engine.start(x, y, actual_count, interval, button, speed, radius, on_progress, on_done)
 
-    def _start_double_click(self, x, y, count, interval_ms, button, speed, on_progress, on_done):
+    def _start_double_click(self, x, y, count, interval_ms, button, speed, radius, on_progress, on_done):
         with self.engine._lock:
             if self.engine._running:
                 return
@@ -2906,9 +3006,10 @@ class AutoClickerApp:
                             break
                     if 0 < count <= clicked:
                         break
-                    pyautogui.click(x=int(x), y=int(y), button=button)
+                    dx, dy = ClickEngine._random_offset(radius)
+                    pyautogui.click(x=int(x) + dx, y=int(y) + dy, button=button)
                     time.sleep(0.01)
-                    pyautogui.click(x=int(x), y=int(y), button=button)
+                    pyautogui.click(x=int(x) + dx, y=int(y) + dy, button=button)
                     clicked += 1
                     if on_progress:
                         try:
@@ -3038,7 +3139,8 @@ class AutoClickerApp:
 
         self.recorder.play(events=events, speed=self.var_play_speed.get(),
                           loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done,
-                          rec_resolution=(self.recorder._rec_w, self.recorder._rec_h))
+                          rec_resolution=(self.recorder._rec_w, self.recorder._rec_h),
+                          radius=self.var_play_radius.get())
 
     def _play_finished(self, err):
         self.btn_play.config(state='normal')
@@ -3161,7 +3263,8 @@ class AutoClickerApp:
         rec_res = rec.get('resolution')
         self.recorder.play(events=self._current_events, speed=self.var_play_speed.get(),
                           loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done,
-                          rec_resolution=tuple(rec_res) if rec_res else None)
+                          rec_resolution=tuple(rec_res) if rec_res else None,
+                          radius=self.var_play_radius.get())
         cur_w, cur_h = pyautogui.size().width, pyautogui.size().height
         if rec_res and (rec_res[0] != cur_w or rec_res[1] != cur_h):
             self.sv_status.set(f"🔄 复现: {rec['name']} (自动缩放 {rec_res[0]}×{rec_res[1]} → {cur_w}×{cur_h})")

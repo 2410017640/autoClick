@@ -625,29 +625,65 @@ class Recorder:
         self._t0        = time.time()
         self._on_event  = on_event
 
-        def _on_click(x, y, button, pressed):
-            if not self._recording:
-                return False
-            if not pressed:
-                return True
-            btn = {
+        # 拖动检测状态
+        self._drag_state = None  # None / {'button':..., 'x0':..., 'y0':..., 't0':...}
+        DRAG_THRESHOLD = 5  # 移动超过5像素才算拖动
+
+        def _btn_name(button):
+            return {
                 pynput_mouse.Button.left:   'left',
                 pynput_mouse.Button.right:  'right',
                 pynput_mouse.Button.middle: 'middle',
             }.get(button, 'left')
-            ev = {
-                'type':   'click',
-                'x':      int(x),
-                'y':      int(y),
-                'button': btn,
-                'time':   round(time.time() - self._t0, 3),
-            }
+
+        def _emit(ev):
             self._events.append(ev)
             if self._on_event:
                 try:
                     self._on_event('add', ev)
                 except Exception:
                     pass
+
+        def _on_click(x, y, button, pressed):
+            if not self._recording:
+                return False
+            btn = _btn_name(button)
+            now = round(time.time() - self._t0, 3)
+
+            if pressed:
+                # 按下 → 记录为可能的拖动起点
+                self._drag_state = {
+                    'button': btn,
+                    'x0': int(x), 'y0': int(y),
+                    't0': now,
+                }
+            else:
+                # 释放 → 判断是拖动还是普通点击
+                if self._drag_state is not None:
+                    ds = self._drag_state
+                    self._drag_state = None
+                    dx = abs(int(x) - ds['x0'])
+                    dy = abs(int(y) - ds['y0'])
+                    if dx > DRAG_THRESHOLD or dy > DRAG_THRESHOLD:
+                        # 是拖动
+                        ev = {
+                            'type': 'drag',
+                            'x0': ds['x0'], 'y0': ds['y0'],
+                            'x1': int(x), 'y1': int(y),
+                            'button': ds['button'],
+                            'time': ds['t0'],
+                            'duration': round(now - ds['t0'], 3),
+                        }
+                        _emit(ev)
+                    else:
+                        # 是普通点击
+                        ev = {
+                            'type': 'click',
+                            'x': ds['x0'], 'y': ds['y0'],
+                            'button': ds['button'],
+                            'time': ds['t0'],
+                        }
+                        _emit(ev)
             return True
 
         self._ml = pynput_mouse.Listener(on_click=_on_click)
@@ -687,6 +723,26 @@ class Recorder:
                                 x=ev['x'], y=ev['y'],
                                 button=ev.get('button', 'left')
                             )
+                        elif ev['type'] == 'drag':
+                            dur = ev.get('duration', 0.5)
+                            if dur > 0:
+                                pyautogui.moveTo(
+                                    ev['x0'], ev['y0'],
+                                    duration=min(dur / speed, 3.0)
+                                )
+                                pyautogui.drag(
+                                    ev['x1'] - ev['x0'],
+                                    ev['y1'] - ev['y0'],
+                                    duration=min(dur / speed, 3.0),
+                                    button=ev.get('button', 'left')
+                                )
+                            else:
+                                pyautogui.drag(
+                                    ev['x1'] - ev['x0'],
+                                    ev['y1'] - ev['y0'],
+                                    duration=0.2,
+                                    button=ev.get('button', 'left')
+                                )
                         if on_progress:
                             try:
                                 on_progress(i + 1, len(ev_list))

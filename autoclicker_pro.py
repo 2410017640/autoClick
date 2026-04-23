@@ -2187,7 +2187,7 @@ class AutoClickerApp:
         lf2 = ttk.LabelFrame(parent, text="录制事件", padding=10)
         lf2.pack(fill='both', expand=True, pady=(0, 8))
 
-        cols = ('seq', 'type', 'pos', 'button', 'time')
+        cols = ('seq', 'type', 'pos', 'button', 'time', 'delay', 'action')
         self.tree_events = ttk.Treeview(lf2, columns=cols,
                                          show='headings', height=8)
         self.tree_events.heading('seq',    text='#')
@@ -2195,17 +2195,65 @@ class AutoClickerApp:
         self.tree_events.heading('pos',    text='位置')
         self.tree_events.heading('button', text='按键')
         self.tree_events.heading('time',   text='时间(s)')
-        self.tree_events.column('seq',    width=40,  anchor='center')
-        self.tree_events.column('type',   width=60,  anchor='center')
-        self.tree_events.column('pos',    width=220, anchor='center')
-        self.tree_events.column('button', width=60,  anchor='center')
-        self.tree_events.column('time',   width=80,  anchor='center')
+        self.tree_events.heading('delay',  text='延迟(s)')
+        self.tree_events.heading('action', text='操作')
+        self.tree_events.column('seq',    width=35,  anchor='center')
+        self.tree_events.column('type',   width=55,  anchor='center')
+        self.tree_events.column('pos',    width=170, anchor='center')
+        self.tree_events.column('button', width=55,  anchor='center')
+        self.tree_events.column('time',   width=65,  anchor='center')
+        self.tree_events.column('delay',  width=60,  anchor='center')
+        self.tree_events.column('action', width=60,  anchor='center')
 
         sb = ttk.Scrollbar(lf2, orient='vertical',
                            command=self.tree_events.yview)
         self.tree_events.configure(yscrollcommand=sb.set)
         self.tree_events.pack(side='left', fill='both', expand=True)
         sb.pack(side='right', fill='y')
+
+        # tree_events 点击处理（删除/编辑延迟）
+        def _on_tree_click(event):
+            region = self.tree_events.identify_region(event.x, event.y)
+            if region != 'cell':
+                return
+            col = self.tree_events.identify_column(event.x)
+            item_id = self.tree_events.identify_row(event.y)
+            if not item_id:
+                return
+            col_idx = self.tree_events['columns'].index(self.tree_events.identify_column(event.x))
+            # col_idx: 0=seq,1=type,2=pos,3=button,4=time,5=delay,6=action
+            if col_idx == 6:  # 操作列
+                # 删除该行
+                idx = self.tree_events.index(item_id)
+                self._current_events.pop(idx)
+                self.tree_events.delete(item_id)
+                # 重新编号
+                for i, cid in enumerate(self.tree_events.get_children(), 1):
+                    vals = list(self.tree_events.item(cid, 'values'))
+                    vals[0] = i
+                    self.tree_events.item(cid, values=vals)
+                self.sv_status.set(f"已删除步骤，剩余 {len(self._current_events)} 个事件")
+            elif col_idx == 5:  # 延迟列 — 弹出编辑
+                current_vals = self.tree_events.item(item_id, 'values')
+                old_delay = current_vals[5]
+                new_delay = simpledialog.askstring("编辑延迟",
+                    "请输入该步骤的延迟时间（秒）:",
+                    initialvalue=str(old_delay) if old_delay != '-' else '0')
+                if new_delay is not None:
+                    try:
+                        delay_val = float(new_delay)
+                        vals = list(current_vals)
+                        vals[5] = f"{delay_val:.3f}"
+                        self.tree_events.item(item_id, values=vals)
+                        idx = self.tree_events.index(item_id)
+                        if idx < len(self._current_events):
+                            self._current_events[idx]['_extra_delay'] = delay_val
+                    except ValueError:
+                        messagebox.showwarning("输入错误", "请输入有效的数字")
+
+        self.tree_events.bind('<Button-1>', _on_tree_click)
+
+        self._current_events = []   # 当前编辑中的事件列表
 
         # ---- 复现与保存 ----
         lf3 = ttk.LabelFrame(parent, text="复现与保存", padding=10)
@@ -2874,8 +2922,8 @@ class AutoClickerApp:
             record_move=self.var_rec_move.get(),
         )
 
-    def _add_event_row(self, ev):
-        seq = len(self.recorder.events)
+    def _add_event_row(self, ev, delay=None):
+        seq = len(self.tree_events.get_children()) + 1
         btn_cn = {'left': '左键', 'right': '右键',
                   'middle': '中键'}.get(ev.get('button', 'left'), '左键')
         ev_type = ev.get('type', 'click')
@@ -2887,16 +2935,19 @@ class AutoClickerApp:
             type_str = '按键'
             pos_str = '-'
             time_str = f"{ev['time']:.3f}"
+            btn_cn = '-'
         elif ev_type == 'move':
             type_str = '移动'
             pos_str = f"({ev['x']}, {ev['y']})"
             time_str = f"{ev['time']:.3f}"
+            btn_cn = '-'
         else:
             type_str = '点击'
             pos_str = f"({ev['x']}, {ev['y']})"
             time_str = f"{ev['time']:.3f}"
+        delay_str = f"{delay:.3f}" if delay is not None else "-"
         self.tree_events.insert('', 'end', values=(
-            seq, type_str, pos_str, btn_cn, time_str
+            seq, type_str, pos_str, btn_cn, time_str, delay_str, '删除'
         ))
         children = self.tree_events.get_children()
         if children:
@@ -2912,6 +2963,8 @@ class AutoClickerApp:
         self.sv_rec_status.set(f"已录制 {count} 个事件 ({rec_w}×{rec_h})")
         self.sv_status.set(f"✅ 录制完成，共 {count} 个事件")
         self.var_save_name.set(f"录制_{datetime.now().strftime('%Y%m%d_%H%M%S')}")
+        # 将录制结果同步到可编辑的事件列表
+        self._current_events = list(self.recorder.events)
 
     # ════════════════ 复现逻辑 ════════════════
 
@@ -3012,12 +3065,35 @@ class AutoClickerApp:
         for item in self.tree_events.get_children():
             self.tree_events.delete(item)
         for i, ev in enumerate(events, 1):
+            ev_type = ev.get('type', 'click')
             btn_cn = {'left': '左键', 'right': '右键',
                       'middle': '中键'}.get(ev.get('button', 'left'), '左键')
+            if ev_type == 'drag':
+                type_str = '拖动'
+                pos_str = f"({ev['x0']}, {ev['y0']}) → ({ev['x1']}, {ev['y1']})"
+                time_str = f"{ev['time']:.3f} ({ev.get('duration', 0):.3f}s)"
+            elif ev_type == 'key':
+                type_str = '按键'
+                pos_str = '-'
+                time_str = f"{ev['time']:.3f}"
+                btn_cn = '-'
+            elif ev_type == 'move':
+                type_str = '移动'
+                pos_str = f"({ev['x']}, {ev['y']})"
+                time_str = f"{ev['time']:.3f}"
+                btn_cn = '-'
+            else:
+                type_str = '点击'
+                pos_str = f"({ev['x']}, {ev['y']})"
+                time_str = f"{ev['time']:.3f}"
+            # delay 列：相对于上一个事件的时间差
+            delay_str = "-"
             self.tree_events.insert('', 'end', values=(
-                i, '点击', f"({ev['x']}, {ev['y']})", btn_cn,
-                f"{ev['time']:.3f}"
+                i, type_str, pos_str, btn_cn,
+                time_str, delay_str, '删除'
             ))
+        # 同步到可编辑事件列表
+        self._current_events = list(events)
 
         self.btn_play.config(state='disabled')
         self.btn_stop_play.config(state='normal')
@@ -3030,7 +3106,7 @@ class AutoClickerApp:
             self.root.after(0, lambda: self._play_finished(err))
 
         rec_res = rec.get('resolution')
-        self.recorder.play(events=events, speed=self.var_play_speed.get(),
+        self.recorder.play(events=self._current_events, speed=self.var_play_speed.get(),
                           loop=self.var_loop.get(), on_progress=on_progress, on_done=on_done,
                           rec_resolution=tuple(rec_res) if rec_res else None)
         cur_w, cur_h = pyautogui.size().width, pyautogui.size().height

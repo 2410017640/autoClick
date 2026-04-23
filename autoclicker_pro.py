@@ -2153,25 +2153,30 @@ class AutoClickerApp:
         """保存编辑的延迟值"""
         try:
             new_delay = float(delay_var.get())
-            ev = self._current_events[idx]
-            ev['_extra_delay'] = new_delay
+            if idx < len(self._current_events):
+                ev = self._current_events[idx]
+                ev['_extra_delay'] = new_delay
             vals = list(self.tree_events.item(item_id, 'values'))
             vals[5] = f"{new_delay:.3f}" if new_delay != 0 else '-'
             self.tree_events.item(item_id, values=vals)
             dialog.destroy()
         except ValueError:
-            from tkinter import messagebox
-            messagebox.showwarning("Input error", "Enter a valid number", parent=dialog)
+            messagebox.showwarning("输入错误", "请输入有效的数字", parent=dialog)
 
-    def _delete_event(self, idx, item_id):
+    def _delete_event(self, idx, item_id, dialog=None):
         """删除事件行"""
+        if dialog:
+            try:
+                dialog.destroy()
+            except tk.TclError:
+                pass  # 窗口已关闭
         self._current_events.pop(idx)
         self.tree_events.delete(item_id)
         for i, cid in enumerate(self.tree_events.get_children(), 1):
             vals = list(self.tree_events.item(cid, 'values'))
             vals[0] = i
             self.tree_events.item(cid, values=vals)
-        self.sv_status.set(f"Step deleted, {len(self._current_events)} remaining")
+        self.sv_status.set(f"已删除，当前剩余 {len(self._current_events)} 步")
 
     # ──────── Tab 2: 操作录制 ────────
     def _build_record_tab(self, parent):
@@ -2278,9 +2283,9 @@ class AutoClickerApp:
 
                 frm = tk.Frame(dialog)
                 frm.pack(pady=16)
-                tk.Button(frm, text="Save", command=lambda: self._apply_edit(item_id, idx, delay_var, dialog), width=10).pack(side='left', padx=6)
-                tk.Button(frm, text="Del", command=lambda: self._delete_event(idx, item_id), width=10, fg='red').pack(side='left', padx=6)
-                tk.Button(frm, text="Cancel", command=dialog.destroy, width=10).pack(side='left', padx=6)
+                tk.Button(frm, text="保存", command=lambda: self._apply_edit(item_id, idx, delay_var, dialog), width=10).pack(side='left', padx=6)
+                tk.Button(frm, text="删除", command=lambda: self._delete_event(idx, item_id, dialog), width=10, fg='red').pack(side='left', padx=6)
+                tk.Button(frm, text="取消", command=dialog.destroy, width=10).pack(side='left', padx=6)
             elif col_idx == 5:  # 延迟列 — 弹出编辑
                 current_vals = self.tree_events.item(item_id, 'values')
                 old_delay = current_vals[5]

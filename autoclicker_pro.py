@@ -3491,16 +3491,19 @@ class AutoClickerApp:
     # ════════════════ 退出 ════════════════
 
     def _quit(self):
-        self.engine.stop()
-        self.flow_engine.stop()
-        self.recorder.stop_recording()
-        self.recorder.stop_playback()
-        if self._pick_ml:
-            self._pick_ml.stop()
-        if self._kb_l:
-            self._kb_l.stop()
-        self.root.destroy()
-        sys.exit(0)
+        try:
+            self.engine.stop()
+            self.flow_engine.stop()
+            self.recorder.stop_recording()
+            self.recorder.stop_playback()
+            if self._pick_ml:
+                self._pick_ml.stop()
+            if self._kb_l:
+                self._kb_l.stop()
+            self.root.destroy()
+        except Exception:
+            pass
+        os._exit(0)
 
 
 # ═══════════════════════════════════════════════════════════════

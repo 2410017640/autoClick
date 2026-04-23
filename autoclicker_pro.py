@@ -2149,6 +2149,30 @@ class AutoClickerApp:
                   foreground='gray').grid(row=row, column=0)
         row += 1
 
+    def _apply_edit(self, item_id, idx, delay_var, dialog):
+        """保存编辑的延迟值"""
+        try:
+            new_delay = float(delay_var.get())
+            ev = self._current_events[idx]
+            ev['_extra_delay'] = new_delay
+            vals = list(self.tree_events.item(item_id, 'values'))
+            vals[5] = f"{new_delay:.3f}" if new_delay != 0 else '-'
+            self.tree_events.item(item_id, values=vals)
+            dialog.destroy()
+        except ValueError:
+            from tkinter import messagebox
+            messagebox.showwarning("Input error", "Enter a valid number", parent=dialog)
+
+    def _delete_event(self, idx, item_id):
+        """删除事件行"""
+        self._current_events.pop(idx)
+        self.tree_events.delete(item_id)
+        for i, cid in enumerate(self.tree_events.get_children(), 1):
+            vals = list(self.tree_events.item(cid, 'values'))
+            vals[0] = i
+            self.tree_events.item(cid, values=vals)
+        self.sv_status.set(f"Step deleted, {len(self._current_events)} remaining")
+
     # ──────── Tab 2: 操作录制 ────────
     def _build_record_tab(self, parent):
         # ---- 录制控制 ----
@@ -2213,14 +2237,13 @@ class AutoClickerApp:
 
         # tree_events 点击处理（删除/编辑延迟）
         def _on_tree_click(event):
-            region = self.tree_events.identify_region(event.x, event.y)
-            if region != 'cell':
-                return
             col = self.tree_events.identify_column(event.x)
             item_id = self.tree_events.identify_row(event.y)
             if not item_id:
                 return
-            col_idx = self.tree_events['columns'].index(self.tree_events.identify_column(event.x))
+            # 列索引（identify_column返回#N格式，如#7，需要转成0-based）
+            col_num = int(col.replace('#', ''))   # '#7' -> 7
+            col_idx = col_num - 1                  # 0-based: 6
             # col_idx: 0=seq,1=type,2=pos,3=button,4=time,5=delay,6=action
             if col_idx == 6:  # 编辑列 — 弹出编辑对话框
                 idx = self.tree_events.index(item_id)
@@ -2228,62 +2251,36 @@ class AutoClickerApp:
                     return
                 ev = self._current_events[idx]
                 old_delay = ev.get('_extra_delay', 0.0)
-                old_ev_time = ev.get('time', 0.0)
                 ev_type = ev.get('type', 'click')
                 old_x = ev.get('x', ev.get('x0', 0))
                 old_y = ev.get('y', ev.get('y0', 0))
 
                 dialog = tk.Toplevel(self.root)
                 dialog.title(f"编辑步骤 #{idx + 1}")
-                dialog.geometry("320x220")
                 dialog.resizable(False, False)
                 dialog.transient(self.root)
                 dialog.grab_set()
-                x = self.root.winfo_x() + self.root.winfo_width() // 2 - 160
-                y = self.root.winfo_y() + self.root.winfo_height() // 2 - 110
-                dialog.geometry(f"320x220+{x}+{y}")
+                cx = self.root.winfo_x() + self.root.winfo_width() // 2
+                cy = self.root.winfo_y() + self.root.winfo_height() // 2
+                dialog.geometry(f"320x260+{cx - 160}+{cy - 130}")
 
-                tk.Label(dialog, text=f"类型: {ev_type.upper()}", font=("Microsoft YaHei", 10, "bold")).pack(pady=(12, 4))
+                tk.Label(dialog, text=f"类型: {ev_type.upper()}", font=("Microsoft YaHei", 10, "bold")).pack(pady=(16, 4))
                 if ev_type in ('click', 'move'):
                     tk.Label(dialog, text=f"坐标: ({old_x}, {old_y})").pack()
                 elif ev_type == 'drag':
-                    tk.Label(dialog, text=f"拖动: ({ev['x0']}, {ev['y0']}) → ({ev['x1']}, {ev['y1']})").pack()
+                    tk.Label(dialog, text=f"拖动: ({ev['x0']}, {ev['y0']}) -> ({ev['x1']}, {ev['y1']})").pack()
                 elif ev_type == 'key':
                     tk.Label(dialog, text=f"按键: {ev.get('key', '?')}").pack()
 
-                tk.Label(dialog, text="额外延迟时间（秒）:").pack(pady=(10, 0))
+                tk.Label(dialog, text="额外延迟（秒）:").pack(pady=(12, 0))
                 delay_var = tk.StringVar(value=str(old_delay))
                 tk.Entry(dialog, textvariable=delay_var, width=30).pack(pady=4)
 
-                result = {'apply': False}
-
-                def do_apply():
-                    try:
-                        new_delay = float(delay_var.get())
-                        ev['_extra_delay'] = new_delay
-                        vals = list(self.tree_events.item(item_id, 'values'))
-                        vals[5] = f"{new_delay:.3f}" if new_delay != 0 else '-'
-                        self.tree_events.item(item_id, values=vals)
-                        result['apply'] = True
-                        dialog.destroy()
-                    except ValueError:
-                        messagebox.showwarning("输入错误", "请输入有效的数字", parent=dialog)
-
-                def do_delete():
-                    self._current_events.pop(idx)
-                    self.tree_events.delete(item_id)
-                    for i, cid in enumerate(self.tree_events.get_children(), 1):
-                        vals = list(self.tree_events.item(cid, 'values'))
-                        vals[0] = i
-                        self.tree_events.item(cid, values=vals)
-                    self.sv_status.set(f"已删除步骤，剩余 {len(self._current_events)} 个事件")
-                    dialog.destroy()
-
                 frm = tk.Frame(dialog)
-                frm.pack(pady=12)
-                tk.Button(frm, text="💾 保存", command=do_apply, width=10).pack(side='left', padx=8)
-                tk.Button(frm, text="🗑️ 删除", command=do_delete, width=10, fg='red').pack(side='left', padx=8)
-                tk.Button(frm, text="取消", command=dialog.destroy, width=10).pack(side='left', padx=8)
+                frm.pack(pady=16)
+                tk.Button(frm, text="Save", command=lambda: self._apply_edit(item_id, idx, delay_var, dialog), width=10).pack(side='left', padx=6)
+                tk.Button(frm, text="Del", command=lambda: self._delete_event(idx, item_id), width=10, fg='red').pack(side='left', padx=6)
+                tk.Button(frm, text="Cancel", command=dialog.destroy, width=10).pack(side='left', padx=6)
             elif col_idx == 5:  # 延迟列 — 弹出编辑
                 current_vals = self.tree_events.item(item_id, 'values')
                 old_delay = current_vals[5]

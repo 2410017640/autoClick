@@ -1925,6 +1925,10 @@ class AutoClickerApp:
         self._kb_l = None
         self._clipboard_steps = []
 
+        # 快捷键设置（持久化）
+        self.hotkey_file = Path(__file__).parent / 'hotkey_settings.json'
+        self.hotkeys = self._load_hotkeys()
+
         self._build_ui()
         self._start_kb_listener()
         self._tick_pos()
@@ -1941,7 +1945,7 @@ class AutoClickerApp:
         top.pack(fill='x', **pad)
         ttk.Label(
             top,
-            text="快捷键: F6 开始/停止 | Esc 取消 | 安全退出: 鼠标移至左上角",
+            textvariable=self.sv_hotkey_hint,
             foreground='gray',
             font=('Microsoft YaHei UI', 8)
         ).pack(anchor='w')
@@ -1966,11 +1970,17 @@ class AutoClickerApp:
         self.nb.add(f4, text='  ⚡ 高级模式  ')
         self._build_advanced_tab(f4)
 
+        f5 = ttk.Frame(self.nb, padding=12)
+        self.nb.add(f5, text='  ⌨️ 快捷键设置  ')
+        self._build_hotkey_tab(f5)
+
         # ---- 状态栏 ----
         sbar = ttk.Frame(self.root, padding=(10, 4))
         sbar.pack(fill='x')
         self.sv_status = tk.StringVar(value="✅ 就绪")
         self.sv_pos = tk.StringVar(value="")
+        self.sv_hotkey_hint = tk.StringVar(value="")
+        self._update_hotkey_hint()
         ttk.Label(sbar, textvariable=self.sv_status).pack(side='left')
         ttk.Label(sbar, textvariable=self.sv_pos,
                   foreground='gray').pack(side='right')
@@ -2968,18 +2978,185 @@ class AutoClickerApp:
 
     # ════════════════ 全局快捷键 ════════════════
 
+    _DEFAULT_HOTKEYS = {
+        'start_stop': 'F6',
+        'cancel':     'Escape',
+    }
+    _HOTKEY_LABELS = {
+        'start_stop': '开始/停止点击',
+        'cancel':     '取消取点',
+    }
+    _KEY_MAP = {
+        'F1': pynput_keyboard.Key.f1,
+        'F2': pynput_keyboard.Key.f2,
+        'F3': pynput_keyboard.Key.f3,
+        'F4': pynput_keyboard.Key.f4,
+        'F5': pynput_keyboard.Key.f5,
+        'F6': pynput_keyboard.Key.f6,
+        'F7': pynput_keyboard.Key.f7,
+        'F8': pynput_keyboard.Key.f8,
+        'F9': pynput_keyboard.Key.f9,
+        'F10': pynput_keyboard.Key.f10,
+        'F11': pynput_keyboard.Key.f11,
+        'F12': pynput_keyboard.Key.f12,
+        'Escape': pynput_keyboard.Key.esc,
+        'Insert': pynput_keyboard.Key.insert,
+        'Delete': pynput_keyboard.Key.delete,
+        'Home': pynput_keyboard.Key.home,
+        'End': pynput_keyboard.Key.end,
+        'PageUp': pynput_keyboard.Key.page_up,
+        'PageDown': pynput_keyboard.Key.page_down,
+        'Tab': pynput_keyboard.Key.tab,
+        'Space': pynput_keyboard.Key.space,
+        'Pause': pynput_keyboard.Key.pause,
+    }
+    _KEY_OPTIONS = [
+        'F1','F2','F3','F4','F5','F6','F7','F8','F9','F10','F11','F12',
+        'Escape','Insert','Delete','Home','End','PageUp','PageDown','Space','Pause',
+    ]
+
+    def _load_hotkeys(self):
+        if self.hotkey_file.exists():
+            try:
+                with open(self.hotkey_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                merged = dict(self._DEFAULT_HOTKEYS)
+                merged.update(data)
+                return merged
+            except Exception:
+                pass
+        return dict(self._DEFAULT_HOTKEYS)
+
+    def _save_hotkeys(self):
+        with open(self.hotkey_file, 'w', encoding='utf-8') as f:
+            json.dump(self.hotkeys, f, ensure_ascii=False, indent=2)
+
+    def _update_hotkey_hint(self):
+        k1 = self.hotkeys.get('start_stop', 'F6')
+        k2 = self.hotkeys.get('cancel', 'Escape')
+        self.sv_hotkey_hint.set(
+            f"快捷键: {k1} 开始/停止 | {k2} 取消 | 安全退出: 鼠标移至左上角"
+        )
+
+    def _key_name_to_pynput(self, name):
+        return self._KEY_MAP.get(name)
+
     def _start_kb_listener(self):
+        key_start = self._key_name_to_pynput(self.hotkeys.get('start_stop', 'F6'))
+        key_cancel = self._key_name_to_pynput(self.hotkeys.get('cancel', 'Escape'))
+
         def on_press(key):
             try:
-                if key == pynput_keyboard.Key.f6:
+                if key == key_start:
                     self.root.after(0, self._toggle_click)
-                elif key == pynput_keyboard.Key.esc:
+                elif key == key_cancel:
                     self.root.after(0, self._cancel_pick)
             except Exception:
                 pass
 
         self._kb_l = pynput_keyboard.Listener(on_press=on_press)
         self._kb_l.start()
+
+    def _restart_kb_listener(self):
+        if self._kb_l:
+            self._kb_l.stop()
+        self._start_kb_listener()
+
+    # ──────── Tab 5: 快捷键设置 ────────
+    def _build_hotkey_tab(self, parent):
+        parent.columnconfigure(0, weight=1)
+
+        # 说明
+        ttk.Label(
+            parent,
+            text="自定义全局快捷键（重启监听后生效，关闭窗口自动保存）",
+            foreground='gray', font=('Microsoft YaHei UI', 9)
+        ).grid(row=0, column=0, columnspan=3, sticky='w', pady=(0, 12))
+
+        self._hotkey_combos = {}
+        row = 1
+
+        for action, label in self._HOTKEY_LABELS.items():
+            ttk.Label(parent, text=label, font=('Microsoft YaHei UI', 10)
+                     ).grid(row=row, column=0, sticky='e', padx=(0, 10), pady=6)
+
+            current = self.hotkeys.get(action, self._DEFAULT_HOTKEYS[action])
+            var = tk.StringVar(value=current)
+            combo = ttk.Combobox(parent, textvariable=var,
+                                values=self._KEY_OPTIONS, state='readonly',
+                                width=14)
+            combo.grid(row=row, column=1, sticky='w', pady=6)
+            self._hotkey_combos[action] = var
+            row += 1
+
+        # 冲突提示
+        self.sv_hotkey_conflict = tk.StringVar(value="")
+        ttk.Label(parent, textvariable=self.sv_hotkey_conflict,
+                  foreground='red', font=('Microsoft YaHei UI', 9)
+                 ).grid(row=row, column=0, columnspan=3, sticky='w', pady=4)
+        row += 1
+
+        # 按钮区
+        bf = ttk.Frame(parent)
+        bf.grid(row=row, column=0, columnspan=3, pady=16)
+
+        ttk.Button(bf, text="✅ 应用并重启快捷键",
+                   command=self._apply_hotkeys, width=22
+                  ).pack(side='left', padx=8)
+        ttk.Button(bf, text="🔄 恢复默认",
+                   command=self._reset_hotkeys, width=16
+                  ).pack(side='left', padx=8)
+
+        # 当前绑定预览
+        lf = ttk.LabelFrame(parent, text="当前绑定预览", padding=10)
+        lf.grid(row=row+1, column=0, columnspan=3, sticky='ew', pady=(8, 0))
+        self.sv_hotkey_preview = tk.StringVar()
+        self._update_hotkey_preview()
+        ttk.Label(lf, textvariable=self.sv_hotkey_preview,
+                  font=('Consolas', 10)).pack(anchor='w')
+
+    def _update_hotkey_preview(self):
+        lines = []
+        for action, label in self._HOTKEY_LABELS.items():
+            key = self.hotkeys.get(action, self._DEFAULT_HOTKEYS[action])
+            lines.append(f"  {label:16s} →  {key}")
+        self.sv_hotkey_preview.set('\n'.join(lines))
+
+    def _check_hotkey_conflict(self):
+        used = {}
+        for action, var in self._hotkey_combos.items():
+            val = var.get()
+            if val in used:
+                return f"⚠️ 冲突：'{self._HOTKEY_LABELS[action]}' 和 '{self._HOTKEY_LABELS[used[val]]}' 使用了相同的快捷键 {val}"
+            used[val] = action
+        return None
+
+    def _apply_hotkeys(self):
+        conflict = self._check_hotkey_conflict()
+        if conflict:
+            self.sv_hotkey_conflict.set(conflict)
+            return
+        self.sv_hotkey_conflict.set("")
+
+        for action, var in self._hotkey_combos.items():
+            self.hotkeys[action] = var.get()
+        self._save_hotkeys()
+        self._restart_kb_listener()
+        self._update_hotkey_hint()
+        self._update_hotkey_preview()
+        self.sv_status.set("✅ 快捷键已更新")
+
+    def _reset_hotkeys(self):
+        for action, default in self._DEFAULT_HOTKEYS.items():
+            self.hotkeys[action] = default
+            if action in self._hotkey_combos:
+                self._hotkey_combos[action].set(default)
+        self._save_hotkeys()
+        self._restart_kb_listener()
+        self._update_hotkey_hint()
+        self._update_hotkey_preview()
+        self.sv_hotkey_conflict.set("")
+        self.sv_status.set("✅ 快捷键已恢复默认")
 
     # ════════════════ 鼠标位置追踪 ════════════════
 

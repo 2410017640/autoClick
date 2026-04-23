@@ -1507,11 +1507,13 @@ class StepEditDialog(tk.Toplevel):
                         
     def _pick_position(self):
         """取点 - 使用全屏透明窗口方式"""
+        # 释放模态抓取，否则 pick_win 无法接收事件
+        self.grab_release()
         self.iconify()
         time.sleep(0.3)
         
         # 创建全屏透明窗口
-        pick_win = tk.Toplevel()
+        pick_win = tk.Toplevel(self.master)
         pick_win.attributes('-fullscreen', True)
         pick_win.attributes('-topmost', True)
         pick_win.attributes('-alpha', 0.01)  # 几乎透明
@@ -1528,10 +1530,12 @@ class StepEditDialog(tk.Toplevel):
             self.var_pos_y.set(y)
             pick_win.destroy()
             self.deiconify()
+            self.grab_set()
             
         def on_escape(event):
             pick_win.destroy()
             self.deiconify()
+            self.grab_set()
         
         pick_win.bind('<Button-1>', on_click)
         pick_win.bind('<Escape>', on_escape)
@@ -1541,15 +1545,17 @@ class StepEditDialog(tk.Toplevel):
         self.var_pos_x.set(x)
         self.var_pos_y.set(y)
         self.deiconify()
+        self.grab_set()
         if hasattr(self, '_pick_listener'):
             self._pick_listener.stop()
             
     def _pick_drag_start(self):
         """取拖动起点 - 使用全屏透明窗口方式"""
+        self.grab_release()
         self.iconify()
         time.sleep(0.3)
         
-        pick_win = tk.Toplevel()
+        pick_win = tk.Toplevel(self.master)
         pick_win.attributes('-fullscreen', True)
         pick_win.attributes('-topmost', True)
         pick_win.attributes('-alpha', 0.01)
@@ -1565,10 +1571,12 @@ class StepEditDialog(tk.Toplevel):
             self.var_drag_start_y.set(y)
             pick_win.destroy()
             self.deiconify()
+            self.grab_set()
             
         def on_escape(event):
             pick_win.destroy()
             self.deiconify()
+            self.grab_set()
         
         pick_win.bind('<Button-1>', on_click)
         pick_win.bind('<Escape>', on_escape)
@@ -1578,15 +1586,17 @@ class StepEditDialog(tk.Toplevel):
         self.var_drag_start_x.set(x)
         self.var_drag_start_y.set(y)
         self.deiconify()
+        self.grab_set()
         if hasattr(self, '_pick_start_listener'):
             self._pick_start_listener.stop()
             
     def _pick_drag_end(self):
         """取拖动终点 - 使用全屏透明窗口方式"""
+        self.grab_release()
         self.iconify()
         time.sleep(0.3)
         
-        pick_win = tk.Toplevel()
+        pick_win = tk.Toplevel(self.master)
         pick_win.attributes('-fullscreen', True)
         pick_win.attributes('-topmost', True)
         pick_win.attributes('-alpha', 0.01)
@@ -1602,10 +1612,12 @@ class StepEditDialog(tk.Toplevel):
             self.var_drag_end_y.set(y)
             pick_win.destroy()
             self.deiconify()
+            self.grab_set()
             
         def on_escape(event):
             pick_win.destroy()
             self.deiconify()
+            self.grab_set()
         
         pick_win.bind('<Button-1>', on_click)
         pick_win.bind('<Escape>', on_escape)
@@ -1613,11 +1625,12 @@ class StepEditDialog(tk.Toplevel):
             
     def _capture_region(self):
         """框选截图"""
+        self.grab_release()
         self.iconify()
         time.sleep(0.3)
         
         # 创建全屏透明窗口
-        capture_win = tk.Toplevel()
+        capture_win = tk.Toplevel(self.master)
         capture_win.attributes('-fullscreen', True)
         capture_win.attributes('-topmost', True)
         capture_win.attributes('-alpha', 0.3)
@@ -1669,8 +1682,7 @@ class StepEditDialog(tk.Toplevel):
         def on_escape(event):
             capture_win.destroy()
             self.deiconify()
-            
-        canvas.bind('<Button-1>', on_mouse_down)
+            self.grab_set()
         canvas.bind('<B1-Motion>', on_mouse_move)
         canvas.bind('<ButtonRelease-1>', on_mouse_up)
         capture_win.bind('<Escape>', on_escape)
@@ -1690,6 +1702,7 @@ class StepEditDialog(tk.Toplevel):
             messagebox.showerror("错误", f"截图失败: {e}")
             
         self.deiconify()
+        self.grab_set()
         
     def _update_image_preview(self):
         """更新图片预览"""

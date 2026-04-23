@@ -617,7 +617,8 @@ class Recorder:
     def events(self):
         return list(self._events)
 
-    def start_recording(self, on_event=None):
+    def start_recording(self, on_event=None, record_mouse=True,
+                             record_key=False, record_drag=True):
         if self._recording:
             return
         self._recording = True
@@ -626,8 +627,8 @@ class Recorder:
         self._on_event  = on_event
 
         # 拖动检测状态
-        self._drag_state = None  # None / {'button':..., 'x0':..., 'y0':..., 't0':...}
-        DRAG_THRESHOLD = 5  # 移动超过5像素才算拖动
+        self._drag_state = None
+        DRAG_THRESHOLD = 5
 
         def _btn_name(button):
             return {
@@ -647,25 +648,33 @@ class Recorder:
         def _on_click(x, y, button, pressed):
             if not self._recording:
                 return False
+            if not record_mouse:
+                return True
             btn = _btn_name(button)
             now = round(time.time() - self._t0, 3)
 
             if pressed:
-                # 按下 → 记录为可能的拖动起点
-                self._drag_state = {
-                    'button': btn,
-                    'x0': int(x), 'y0': int(y),
-                    't0': now,
-                }
+                if record_drag:
+                    self._drag_state = {
+                        'button': btn,
+                        'x0': int(x), 'y0': int(y),
+                        't0': now,
+                    }
+                else:
+                    ev = {
+                        'type': 'click',
+                        'x': int(x), 'y': int(y),
+                        'button': btn,
+                        'time': now,
+                    }
+                    _emit(ev)
             else:
-                # 释放 → 判断是拖动还是普通点击
-                if self._drag_state is not None:
+                if record_drag and self._drag_state is not None:
                     ds = self._drag_state
                     self._drag_state = None
                     dx = abs(int(x) - ds['x0'])
                     dy = abs(int(y) - ds['y0'])
                     if dx > DRAG_THRESHOLD or dy > DRAG_THRESHOLD:
-                        # 是拖动
                         ev = {
                             'type': 'drag',
                             'x0': ds['x0'], 'y0': ds['y0'],
@@ -676,7 +685,6 @@ class Recorder:
                         }
                         _emit(ev)
                     else:
-                        # 是普通点击
                         ev = {
                             'type': 'click',
                             'x': ds['x0'], 'y': ds['y0'],
@@ -689,11 +697,36 @@ class Recorder:
         self._ml = pynput_mouse.Listener(on_click=_on_click)
         self._ml.start()
 
+        # 键盘录制
+        self._kl = None
+        if record_key:
+            def _on_press(key):
+                if not self._recording:
+                    return False
+                try:
+                    key_str = key.char
+                except AttributeError:
+                    key_str = str(key)
+                ev = {
+                    'type': 'key',
+                    'key': key_str,
+                    'time': round(time.time() - self._t0, 3),
+                }
+                _emit(ev)
+                return True
+
+            self._kl = pynput_keyboard.Listener(on_press=_on_press)
+            self._kl.start()
+
     def stop_recording(self):
         self._recording = False
+        self._drag_state = None
         if self._ml:
             self._ml.stop()
             self._ml = None
+        if self._kl:
+            self._kl.stop()
+            self._kl = None
 
     def play(self, events=None, speed=1.0, loop=False,
              on_progress=None, on_done=None):
@@ -743,6 +776,13 @@ class Recorder:
                                     duration=0.2,
                                     button=ev.get('button', 'left')
                                 )
+                        elif ev['type'] == 'key':
+                            key_str = ev.get('key', '')
+                            if key_str:
+                                try:
+                                    pyautogui.press(key_str)
+                                except Exception:
+                                    pass
                         if on_progress:
                             try:
                                 on_progress(i + 1, len(ev_list))
@@ -2059,6 +2099,18 @@ class AutoClickerApp:
         ttk.Label(bf, textvariable=self.sv_rec_status,
                   foreground='gray').pack(side='right')
 
+        # 录制选项
+        of = ttk.Frame(lf); of.pack(fill='x', pady=(6, 0))
+        self.var_rec_mouse = tk.BooleanVar(value=True)
+        ttk.Checkbutton(of, text="录制鼠标点击/拖动",
+                        variable=self.var_rec_mouse).pack(side='left', padx=(0, 16))
+        self.var_rec_key = tk.BooleanVar(value=False)
+        ttk.Checkbutton(of, text="录制键盘按键",
+                        variable=self.var_rec_key).pack(side='left', padx=(0, 16))
+        self.var_rec_drag = tk.BooleanVar(value=True)
+        ttk.Checkbutton(of, text="录制拖动操作",
+                        variable=self.var_rec_drag).pack(side='left')
+
         # ---- 事件列表 ----
         lf2 = ttk.LabelFrame(parent, text="录制事件", padding=10)
         lf2.pack(fill='both', expand=True, pady=(0, 8))
@@ -2073,7 +2125,7 @@ class AutoClickerApp:
         self.tree_events.heading('time',   text='时间(s)')
         self.tree_events.column('seq',    width=40,  anchor='center')
         self.tree_events.column('type',   width=60,  anchor='center')
-        self.tree_events.column('pos',    width=140, anchor='center')
+        self.tree_events.column('pos',    width=220, anchor='center')
         self.tree_events.column('button', width=60,  anchor='center')
         self.tree_events.column('time',   width=80,  anchor='center')
 
@@ -2739,15 +2791,32 @@ class AutoClickerApp:
             if action == 'add':
                 self.root.after(0, lambda: self._add_event_row(ev))
 
-        self.recorder.start_recording(on_event)
+        self.recorder.start_recording(
+            on_event,
+            record_mouse=self.var_rec_mouse.get(),
+            record_key=self.var_rec_key.get(),
+            record_drag=self.var_rec_drag.get(),
+        )
 
     def _add_event_row(self, ev):
         seq = len(self.recorder.events)
         btn_cn = {'left': '左键', 'right': '右键',
                   'middle': '中键'}.get(ev.get('button', 'left'), '左键')
+        ev_type = ev.get('type', 'click')
+        if ev_type == 'drag':
+            type_str = '拖动'
+            pos_str = f"({ev['x0']}, {ev['y0']}) → ({ev['x1']}, {ev['y1']})"
+            time_str = f"{ev['time']:.3f} ({ev.get('duration', 0):.3f}s)"
+        elif ev_type == 'key':
+            type_str = '按键'
+            pos_str = '-'
+            time_str = f"{ev['time']:.3f}"
+        else:
+            type_str = '点击'
+            pos_str = f"({ev['x']}, {ev['y']})"
+            time_str = f"{ev['time']:.3f}"
         self.tree_events.insert('', 'end', values=(
-            seq, '点击', f"({ev['x']}, {ev['y']})", btn_cn,
-            f"{ev['time']:.3f}"
+            seq, type_str, pos_str, btn_cn, time_str
         ))
         children = self.tree_events.get_children()
         if children:

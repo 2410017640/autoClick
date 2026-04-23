@@ -1052,6 +1052,7 @@ class StepEditDialog(tk.Toplevel):
         self.project = project
         self.on_capture_region = on_capture_region
         self.result = False
+        self._picking = False
         
         self.title(f"编辑步骤 - {step.id}")
         self.geometry("520x680")
@@ -1507,6 +1508,9 @@ class StepEditDialog(tk.Toplevel):
                         
     def _pick_position(self):
         """取点 - 使用全屏透明窗口方式"""
+        if self._picking:
+            return
+        self._picking = True
         # 释放模态抓取，否则 pick_win 无法接收事件
         self.grab_release()
         self.iconify()
@@ -1519,10 +1523,18 @@ class StepEditDialog(tk.Toplevel):
         pick_win.attributes('-alpha', 0.01)  # 几乎透明
         pick_win.configure(bg='black', cursor='cross')
         
+        # 坐标跟随显示
+        coord_label = tk.Label(pick_win, text="X: -, Y: -",
+                              fg='yellow', bg='black', font=('Consolas', 16))
+        coord_label.place(relx=0.5, rely=0.15, anchor='center')
+        
         # 提示标签
         label = tk.Label(pick_win, text="点击屏幕任意位置获取坐标 (Esc取消)", 
                         fg='white', bg='black', font=('Arial', 14))
         label.place(relx=0.5, rely=0.05, anchor='center')
+        
+        def on_motion(event):
+            coord_label.config(text=f"X: {event.x_root}, Y: {event.y_root}")
         
         def on_click(event):
             x, y = event.x_root, event.y_root
@@ -1531,13 +1543,24 @@ class StepEditDialog(tk.Toplevel):
             pick_win.destroy()
             self.deiconify()
             self.grab_set()
+            self._picking = False
+            # 取点成功后显示反馈
+            if hasattr(self, '_pos_feedback'):
+                self._pos_feedback.destroy()
+            fb = tk.Label(self.pos_frame, text=f"✅ 已取点 ({x}, {y})",
+                         fg='green', font=('Arial', 9))
+            fb.pack(pady=2)
+            self._pos_feedback = fb
+            self.after(3000, lambda: fb.destroy() if hasattr(self,'_pos_feedback') and self._pos_feedback==fb else None)
             
         def on_escape(event):
             pick_win.destroy()
             self.deiconify()
             self.grab_set()
+            self._picking = False
         
         pick_win.bind('<Button-1>', on_click)
+        pick_win.bind('<Motion>', on_motion)
         pick_win.bind('<Escape>', on_escape)
         pick_win.focus_set()
         

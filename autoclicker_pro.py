@@ -618,19 +618,23 @@ class Recorder:
         return list(self._events)
 
     def start_recording(self, on_event=None, record_mouse=True,
-                             record_key=False, record_drag=True):
+                             record_key=False, record_drag=True,
+                             record_move=False):
         if self._recording:
             return
         self._recording = True
         self._events    = []
         self._t0        = time.time()
         self._on_event  = on_event
-        # 记录录制时的分辨率
         self._rec_w, self._rec_h = pyautogui.size().width, pyautogui.size().height
 
-        # 拖动检测状态
         self._drag_state = None
         DRAG_THRESHOLD = 5
+        MOVE_INTERVAL = 0.05   # 移动采样间隔（秒）
+        self._move_last_t = 0.0
+        self._move_last_x = None
+        self._move_last_y = None
+        self._move_count  = 0
 
         def _btn_name(button):
             return {
@@ -696,7 +700,35 @@ class Recorder:
                         _emit(ev)
             return True
 
-        self._ml = pynput_mouse.Listener(on_click=_on_click)
+        def _on_move(x, y):
+            if not self._recording:
+                return
+            now = time.time() - self._t0
+            if (now - self._move_last_t) < MOVE_INTERVAL:
+                return
+            px, py = self._move_last_x, self._move_last_y
+            if px is not None:
+                dx = abs(int(x) - int(px))
+                dy = abs(int(y) - int(py))
+                if dx < 2 and dy < 2:
+                    return
+            self._move_last_t = now
+            self._move_last_x = x
+            self._move_last_y = y
+            self._move_count += 1
+            if self._move_count <= 2:
+                return
+            ev = {
+                'type': 'move',
+                'x': int(x), 'y': int(y),
+                'time': round(now, 3),
+            }
+            _emit(ev)
+
+        if record_move:
+            self._ml = pynput_mouse.Listener(on_click=_on_click, on_move=_on_move)
+        else:
+            self._ml = pynput_mouse.Listener(on_click=_on_click)
         self._ml.start()
 
         # 键盘录制
@@ -791,6 +823,12 @@ class Recorder:
                                     duration=0.2,
                                     button=ev.get('button', 'left')
                                 )
+                        elif ev['type'] == 'move':
+                            pyautogui.moveTo(
+                                int(ev['x'] * sx),
+                                int(ev['y'] * sy),
+                                duration=0
+                            )
                         elif ev['type'] == 'key':
                             key_str = ev.get('key', '')
                             if key_str:
@@ -2140,7 +2178,10 @@ class AutoClickerApp:
                         variable=self.var_rec_key).pack(side='left', padx=(0, 16))
         self.var_rec_drag = tk.BooleanVar(value=True)
         ttk.Checkbutton(of, text="录制拖动操作",
-                        variable=self.var_rec_drag).pack(side='left')
+                        variable=self.var_rec_drag).pack(side='left', padx=(0, 16))
+        self.var_rec_move = tk.BooleanVar(value=False)
+        ttk.Checkbutton(of, text="录制鼠标轨迹（全程）",
+                        variable=self.var_rec_move).pack(side='left')
 
         # ---- 事件列表 ----
         lf2 = ttk.LabelFrame(parent, text="录制事件", padding=10)
@@ -2830,6 +2871,7 @@ class AutoClickerApp:
             record_mouse=self.var_rec_mouse.get(),
             record_key=self.var_rec_key.get(),
             record_drag=self.var_rec_drag.get(),
+            record_move=self.var_rec_move.get(),
         )
 
     def _add_event_row(self, ev):
@@ -2844,6 +2886,10 @@ class AutoClickerApp:
         elif ev_type == 'key':
             type_str = '按键'
             pos_str = '-'
+            time_str = f"{ev['time']:.3f}"
+        elif ev_type == 'move':
+            type_str = '移动'
+            pos_str = f"({ev['x']}, {ev['y']})"
             time_str = f"{ev['time']:.3f}"
         else:
             type_str = '点击'

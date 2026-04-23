@@ -3500,6 +3500,7 @@ class AutoClickerApp:
         if self._kb_l:
             self._kb_l.stop()
         self.root.destroy()
+        sys.exit(0)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -3509,3 +3510,4 @@ if __name__ == '__main__':
     root = tk.Tk()
     app = AutoClickerApp(root)
     root.mainloop()
+    sys.exit(0)
